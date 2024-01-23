@@ -32,20 +32,30 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-'''This script uses the new Pluto TDD engine
-   As of Nov 2023, this is in the "dev_phaser_merge" branch of https://github.com/analogdevicesinc/pyadi-iio
-   Also, make sure your Pluto firmware is updated to rev 0.38 (or later)
-   To view the plot properly in Spyder, select Tools->Preferences, IPython Console, and change Graphics backend from Inline to Automatic
-'''
+'''FMCW Range Doppler Demo with Phaser (CN0566)
+   Jon Kraft, Jan 20 2024'''
 
 # Imports
-import adi
-
+import sys
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
 import numpy as np
 import time
+
+'''This script uses the new Pluto TDD engine
+   As of Jan 2024, this is in the "dev_phaser_merge" branch of https://github.com/analogdevicesinc/pyadi-iio
+   Also, make sure your Pluto firmware is updated to rev 0.38 (or later)
+'''
+#sys.path.insert(0,'/home/analog/cn0566_merge/pyadi-iio/')
+import adi
+print(adi.__version__)
+
+# Parameters
+sample_rate = 5e6 
+center_freq = 2.1e9
+signal_freq = int(sample_rate/10)
+ramp_time = 200  # us
+num_chirps = 128
 
 # Instantiate all the Devices
 rpi_ip = "ip:phaser.local"  # IP address of the Raspberry Pi
@@ -74,11 +84,6 @@ except:
     my_phaser.gpios.gpio_vctrl_1 = 1 # 1=Use onboard PLL/LO source  (0=disable PLL and VCO, and set switch to use external LO input)
     my_phaser.gpios.gpio_vctrl_2 = 1 # 1=Send LO to transmit circuitry  (0=disable Tx path, and send LO to LO_OUT)
 
-# Parameters
-sample_rate = 20e6 
-center_freq = 2.1e9
-signal_freq = 0.1e6 
-
 # Configure SDR Rx
 my_sdr.sample_rate = int(sample_rate)
 my_sdr.rx_lo = int(center_freq)   # set this to output_freq - (the freq of the HB100)
@@ -100,8 +105,7 @@ print("RX LO %s" % (my_sdr.rx_lo))
 # Configure the ADF4159 Rampling PLL
 output_freq = 12.145e9
 BW = 500e6
-num_steps = 200
-ramp_time = 0.2e3  # us
+num_steps = ramp_time  # in general it works best if there is 1 step per us
 my_phaser.frequency = int(output_freq / 4)  # Output frequency divided by 4
 my_phaser.freq_dev_range = int(
     BW / 4
@@ -137,7 +141,7 @@ tdd.enable = False         # disable TDD to configure the registers
 tdd.sync_external = True
 tdd.startup_delay_ms = 1
 tdd.frame_length_ms = ramp_time/1e3 + 0.2    # each GPIO toggle is spaced this far apart
-tdd.burst_count = 128       # number of chirps in one continuous receive buffer
+tdd.burst_count = num_chirps       # number of chirps in one continuous receive buffer
 
 tdd.out_channel0_enable = True
 tdd.out_channel0_polarity = False
@@ -219,7 +223,7 @@ start_offset_samples = int((start_offset_time+begin_offset_time)*fs)
 
 
 # %%
-range_doppler_fig, ax = plt.subplots(figsize=(16, 16))
+range_doppler_fig, ax = plt.subplots(figsize=(14, 7))
 
 extent = [-max_doppler_vel, max_doppler_vel, dist.min(), dist.max()]
 
@@ -247,7 +251,7 @@ rx_bursts_fft = np.fft.fftshift(abs(np.fft.fft2(rx_bursts)))
 # %%    
 i = 0
 cmn = ''
-def get_radar_data(frame):
+def get_radar_data():
     global range_doppler
     # Collect data
     my_phaser.gpios.gpio_burst = 0
@@ -267,35 +271,45 @@ def get_radar_data(frame):
         rx_bursts[burst] = sum_data[start_index:stop_index]
     
     rx_bursts_fft = np.fft.fftshift(abs(np.fft.fft2(rx_bursts)))
-    range_doppler.set_data(np.log10(rx_bursts_fft).T)
-    return [range_doppler]
-
-
+    range_doppler_data = np.log10(rx_bursts_fft).T
+    plot_data = range_doppler_data
+    #plot_data = np.clip(plot_data, 0, 6)  # clip the data to control the max spectrogram scale
+    return plot_data
 # %%
+    
+plot_data = np.log10(rx_bursts_fft).T
+#plot_data = np.clip(plot_data, 0, 6)  # clip the data to control the max spectrogram scale
+    
 cmaps = ['inferno', 'plasma']
 cmn = cmaps[0]
-plot_data = np.log10(rx_bursts_fft).T
-plot_data = np.clip(plot_data, 0, 6)
-
-range_doppler = ax.imshow(plot_data, aspect='auto',
-    extent=extent, origin='lower', cmap=matplotlib.colormaps.get_cmap(cmn),
-    )
+try:
+    range_doppler = ax.imshow(plot_data, aspect='auto',
+        extent=extent, origin='lower', cmap=matplotlib.colormaps.get_cmap(cmn),
+        )
+except:
+    print("Using an older version of MatPlotLIB")
+    from matplotlib.cm import get_cmap
+    range_doppler = ax.imshow(plot_data, aspect='auto', vmin=0, vmax=8,
+        extent=extent, origin='lower', cmap=get_cmap(cmn),
+        )
 ax.set_title('Range Doppler Spectrum', fontsize=24)
 ax.set_xlabel('Velocity [m/s]', fontsize=22)
 ax.set_ylabel('Range [m]', fontsize=22)
 
-max_range = 40
-ax.set_xlim([-15, 15])
+max_range = 10
+ax.set_xlim([-6, 6])
 ax.set_ylim([0, max_range])
-ax.set_yticks(np.arange(0, max_range, 4))
+ax.set_yticks(np.arange(2, max_range, 2))
 plt.xticks(fontsize=20)
 plt.yticks(fontsize=20)
 
-print("Press CTRL+C to stop the loop")
+print("sample_rate = ", sample_rate/1e6, "MHz, ramp_time = ", ramp_time, "us, num_chirps = ", num_chirps)
+print("CTRL + c to stop the loop")
 try:
     while True:
-        FuncAnimation(range_doppler_fig, get_radar_data, blit=True, frames=1, repeat=False)
-        plt.show()
+        plot_data = get_radar_data()
+        range_doppler.set_data(plot_data)
+        plt.show(block=False)
         plt.pause(.1)
 except KeyboardInterrupt:  # press ctrl-c to stop the loop
     pass

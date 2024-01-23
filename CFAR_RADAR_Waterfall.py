@@ -33,8 +33,8 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-'''FMCW Radar Demo with Phaser (CN0566)
-   Jon Kraft, Nov 19 2023'''
+'''CFAR Radar Demo with Phaser (CN0566)
+   Jon Kraft, Jan 20 2024'''
 
 # Imports
 import adi
@@ -79,8 +79,9 @@ except:
 sample_rate = 0.6e6
 center_freq = 2.1e9
 signal_freq = 100e3
-num_slices = 50
-fft_size = 1024 * 16
+num_slices = 20     # this sets how much time will be displayed on the waterfall plot
+fft_size = 1024 * 4
+plot_freq = 100e3    # x-axis freq range to plot
 img_array = np.ones((num_slices, fft_size))*(-100)
 
 # Configure SDR Rx
@@ -102,9 +103,8 @@ my_sdr.tx_hardwaregain_chan1 = -0  # must be between 0 and -88
 # Configure the ADF4159 Rampling PLL
 output_freq = 12.145e9
 BW = 500e6
-num_steps = 1000
-ramp_time = 1.2e3  # us
-ramp_time_s = ramp_time / 1e6
+num_steps = 500
+ramp_time = 0.5e3  # us
 my_phaser.frequency = int(output_freq / 4)  # Output frequency divided by 4
 my_phaser.freq_dev_range = int(
     BW / 4
@@ -116,7 +116,9 @@ my_phaser.freq_dev_time = int(
     ramp_time
 )  # total time (in us) of the complete frequency ramp
 print("requested freq dev time = ", ramp_time)
-print("actual freq dev time = ", my_phaser.freq_dev_time)
+ramp_time = my_phaser.freq_dev_time
+ramp_time_s = ramp_time / 1e6
+print("actual freq dev time = ", ramp_time)
 my_phaser.delay_word = 4095  # 12 bit delay word.  4095*PFD = 40.95 us.  For sawtooth ramps, this is also the length of the Ramp_complete signal
 my_phaser.delay_clk = "PFD"  # can be 'PFD' or 'PFD*CLK1'
 my_phaser.delay_start_en = 0  # delay start
@@ -151,7 +153,6 @@ IF: {signal_freq}kHz
 
 # Create a sinewave waveform
 fs = int(my_sdr.sample_rate)
-print("sample_rate:", fs)
 N = int(my_sdr.rx_buffer_size)
 fc = int(signal_freq / (fs / N)) * (fs / N)
 ts = 1 / float(fs)
@@ -165,7 +166,7 @@ my_sdr._ctx.set_timeout(0)
 my_sdr.tx([iq * 0.5, iq])  # only send data to the 2nd channel (that's all we need)
 
 c = 3e8
-default_rf_bw = 500e6
+default_chirp_bw = 500e6
 N_frame = fft_size
 freq = np.linspace(-fs / 2, fs / 2, int(N_frame))
 slope = BW / ramp_time_s
@@ -179,23 +180,23 @@ class Window(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Interactive FFT")
-        self.setGeometry(100, 100, 800, 800)  # (x,y, width, height)
-        self.setFixedWidth(1600)
+        self.setGeometry(0, 0, 400, 400)  # (x,y, width, height)
+        #self.setFixedWidth(600)
+        self.setWindowState(QtCore.Qt.WindowMaximized)
         self.num_rows = 12
         self.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False) #remove the window's close button
         self.UiComponents()
-        # showing all the widgets
         self.show()
 
     # method for components
     def UiComponents(self):
         widget = QWidget()
 
-        global layout
+        global layout, signal_freq, plot_freq
         layout = QGridLayout()
 
         # Control Panel
-        control_label = QLabel("PHASER Simple FMCW Radar")
+        control_label = QLabel("PHASER CFAR Targeting")
         font = control_label.font()
         font.setPointSize(24)
         control_label.setFont(font)
@@ -217,18 +218,18 @@ class Window(QMainWindow):
         self.cfar_check.stateChanged.connect(self.change_cfar)
         layout.addWidget(self.cfar_check, 2, 1)
 
-        # RF bandwidth slider
+        # Chirp bandwidth slider
         self.bw_slider = QSlider(Qt.Horizontal)
         self.bw_slider.setMinimum(100)
         self.bw_slider.setMaximum(500)
-        self.bw_slider.setValue(int(default_rf_bw / 1e6))
+        self.bw_slider.setValue(int(default_chirp_bw / 1e6))
         self.bw_slider.setTickInterval(50)
         self.bw_slider.setMaximumWidth(200)
         self.bw_slider.setTickPosition(QSlider.TicksBelow)
         self.bw_slider.valueChanged.connect(self.get_range_res)
         layout.addWidget(self.bw_slider, 4, 0)
 
-        self.set_bw = QPushButton("Set RF Bandwidth")
+        self.set_bw = QPushButton("Set Chirp Bandwidth")
         self.set_bw.setMaximumWidth(200)
         self.set_bw.pressed.connect(self.set_range_res)
         layout.addWidget(self.set_bw, 5, 0, 1, 1)
@@ -240,9 +241,9 @@ class Window(QMainWindow):
         #CFAR Sliders
         self.cfar_bias = QSlider(Qt.Horizontal)
         self.cfar_bias.setMinimum(0)
-        self.cfar_bias.setMaximum(50)
-        self.cfar_bias.setValue(36)
-        self.cfar_bias.setTickInterval(2)
+        self.cfar_bias.setMaximum(100)
+        self.cfar_bias.setValue(40)
+        self.cfar_bias.setTickInterval(5)
         self.cfar_bias.setMaximumWidth(200)
         self.cfar_bias.setTickPosition(QSlider.TicksBelow)
         self.cfar_bias.valueChanged.connect(self.get_cfar_values)
@@ -353,15 +354,15 @@ class Window(QMainWindow):
         self.fft_plot = pg.plot()
         self.fft_plot.setMinimumWidth(600)
         self.fft_curve = self.fft_plot.plot(freq, pen={'color':'y', 'width':2})
-        self.fft_threshold = self.fft_plot.plot(freq, pen={'color':'r', 'width':8})
+        self.fft_threshold = self.fft_plot.plot(freq, pen={'color':'r', 'width':2})
         title_style = {"size": "20pt"}
         label_style = {"color": "#FFF", "font-size": "14pt"}
         self.fft_plot.setLabel("bottom", text="Frequency", units="Hz", **label_style)
         self.fft_plot.setLabel("left", text="Magnitude", units="dB", **label_style)
         self.fft_plot.setTitle("Received Signal - Frequency Spectrum", **title_style)
         layout.addWidget(self.fft_plot, 0, 2, self.num_rows, 1)
-        self.fft_plot.setYRange(-100, -20)
-        self.fft_plot.setXRange(100e3, 130e3)
+        self.fft_plot.setYRange(-60, 0)
+        self.fft_plot.setXRange(signal_freq, signal_freq+plot_freq)
 
         # Waterfall plot
         self.waterfall = pg.PlotWidget()
@@ -378,7 +379,7 @@ class Window(QMainWindow):
         tr.translate(0,-sample_rate/2)
         tr.scale(0.35, sample_rate / (N))
         self.imageitem.setTransform(tr)
-        zoom_freq = 20e3
+        zoom_freq = 35e3
         self.waterfall.setRange(yRange=(signal_freq, signal_freq + zoom_freq))
         self.waterfall.setTitle("Waterfall Spectrum", **title_style)
         self.waterfall.setLabel("left", "Frequency", units="Hz", **label_style)
@@ -391,7 +392,7 @@ class Window(QMainWindow):
         self.setCentralWidget(widget)
 
     def get_range_res(self):
-        """ Updates the slider bar label with RF bandwidth and range resolution
+        """ Updates the slider bar label with Chirp bandwidth and range resolution
 		Returns:
 			None
 		"""
@@ -406,8 +407,6 @@ class Window(QMainWindow):
         self.cfar_bias_label.setText("CFAR Bias (dB): %0.0f" % (self.cfar_bias.value()))
         self.cfar_guard_label.setText("Num Guard Cells: %0.0f" % (self.cfar_guard.value()))
         self.cfar_ref_label.setText("Num Ref Cells: %0.0f" % (self.cfar_ref.value()))
-
-
 
 
     def get_water_levels(self):
@@ -437,11 +436,11 @@ class Window(QMainWindow):
         my_phaser.set_beam_phase_diff(np.degrees(phase_delta))
 
     def set_range_res(self):
-        """ Sets the RF bandwidth
+        """ Sets the Chirp bandwidth
 		Returns:
 			None
 		"""
-        global dist, slope
+        global dist, slope, signal_freq, plot_freq
         bw = self.bw_slider.value() * 1e6
         slope = bw / ramp_time_s
         dist = (freq - signal_freq) * c / (4 * slope)

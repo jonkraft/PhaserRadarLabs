@@ -34,7 +34,7 @@
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 '''CW Radar Demo with Phaser (CN0566)
-   Jon Kraft, Nov 19 2023'''
+   Jon Kraft, Jan 19 2024'''
 
 # Imports
 import adi
@@ -76,7 +76,7 @@ except:
     my_phaser.gpios.gpio_vctrl_2 = 1 # 1=Send LO to transmit circuitry  (0=disable Tx path, and send LO to LO_OUT)
 
 sample_rate = 0.6e6
-center_freq = 2.1e9
+center_freq = 2.2e9
 signal_freq = 100e3
 num_slices = 50
 fft_size = 1024 * 64
@@ -100,7 +100,7 @@ my_sdr.tx_hardwaregain_chan1 = -0  # must be between 0 and -88
 
 
 # Configure the ADF4159 Rampling PLL
-output_freq = 12.145e9
+output_freq = 12.2e9
 my_phaser.frequency = int(output_freq / 4)  # Output frequency divided by 4
 my_phaser.ramp_mode = "disabled"  # ramp_mode can be:  "disabled", "continuous_sawtooth", "continuous_triangular", "single_sawtooth_burst", "single_ramp_burst"
 my_phaser.enable = 0  # 0 = PLL enable.  Write this last to update all the registers
@@ -132,7 +132,6 @@ class Window(QMainWindow):
         self.num_rows = 12
         self.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False) #remove the window's close button
         self.UiComponents()
-        # showing all the widgets
         self.show()
 
     # method for components
@@ -161,7 +160,7 @@ class Window(QMainWindow):
         self.low_slider = QSlider(Qt.Horizontal)
         self.low_slider.setMinimum(-100)
         self.low_slider.setMaximum(0)
-        self.low_slider.setValue(-40)
+        self.low_slider.setValue(-66)
         self.low_slider.setTickInterval(20)
         self.low_slider.setMaximumWidth(200)
         self.low_slider.setTickPosition(QSlider.TicksBelow)
@@ -171,7 +170,7 @@ class Window(QMainWindow):
         self.high_slider = QSlider(Qt.Horizontal)
         self.high_slider.setMinimum(-100)
         self.high_slider.setMaximum(0)
-        self.high_slider.setValue(-28)
+        self.high_slider.setValue(-42)
         self.high_slider.setTickInterval(20)
         self.high_slider.setMaximumWidth(200)
         self.high_slider.setTickPosition(QSlider.TicksBelow)
@@ -260,6 +259,7 @@ App = QApplication(sys.argv)
 
 # create the instance of our Window
 win = Window()
+win.setWindowState(QtCore.Qt.WindowMaximized)
 index = 0
 
 
