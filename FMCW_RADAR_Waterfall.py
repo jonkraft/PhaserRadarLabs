@@ -78,7 +78,7 @@ except:
 sample_rate = 0.6e6
 center_freq = 2.1e9
 signal_freq = 100e3
-num_slices = 400     # this sets how much time will be displayed on the waterfall plot
+num_slices = 600     # this sets how much time will be displayed on the waterfall plot
 fft_size = 1024 * 4
 plot_freq = 100e3    # x-axis freq range to plot
 img_array = np.ones((num_slices, fft_size))*(-100)
@@ -169,7 +169,7 @@ default_chirp_bw = 500e6
 N_frame = fft_size
 freq = np.linspace(-fs / 2, fs / 2, int(N_frame))
 slope = BW / ramp_time_s
-dist = (freq - signal_freq) * c / (4 * slope)
+dist = (freq - signal_freq) * c / (2 * slope)
 
 plot_dist = False
 
@@ -203,7 +203,7 @@ class Window(QMainWindow):
         layout.addWidget(control_label, 0, 0, 1, 2)
 
         # Check boxes
-        self.x_axis_check = QCheckBox("Toggle Range/Frequency x-axis")
+        self.x_axis_check = QCheckBox("Convert to Distance")
         font = self.x_axis_check.font()
         font.setPointSize(10)
         self.x_axis_check.setFont(font)
@@ -250,7 +250,7 @@ class Window(QMainWindow):
         self.low_slider = QSlider(Qt.Horizontal)
         self.low_slider.setMinimum(-100)
         self.low_slider.setMaximum(0)
-        self.low_slider.setValue(-40)
+        self.low_slider.setValue(-45)
         self.low_slider.setTickInterval(20)
         self.low_slider.setMaximumWidth(200)
         self.low_slider.setTickPosition(QSlider.TicksBelow)
@@ -260,7 +260,7 @@ class Window(QMainWindow):
         self.high_slider = QSlider(Qt.Horizontal)
         self.high_slider.setMinimum(-100)
         self.high_slider.setMaximum(0)
-        self.high_slider.setValue(-5)
+        self.high_slider.setValue(-25)
         self.high_slider.setTickInterval(20)
         self.high_slider.setMaximumWidth(200)
         self.high_slider.setTickPosition(QSlider.TicksBelow)
@@ -394,10 +394,10 @@ class Window(QMainWindow):
         global dist, slope, signal_freq, plot_freq
         bw = self.bw_slider.value() * 1e6
         slope = bw / ramp_time_s
-        dist = (freq - signal_freq) * c / (4 * slope)
+        dist = (freq - signal_freq) * c / (2 * slope)
         if self.x_axis_check.isChecked() == True:
             plot_dist = True
-            range_x = (plot_freq) * c / (4 * slope)
+            range_x = (plot_freq) * c / (2 * slope)
             self.fft_plot.setXRange(0, range_x)
         else:
             plot_dist = False
@@ -424,7 +424,7 @@ class Window(QMainWindow):
         plot_state = win.fft_plot.getViewBox().state
         if state == QtCore.Qt.Checked:
             plot_dist = True
-            range_x = (plot_freq) * c / (4 * slope)
+            range_x = (plot_freq) * c / (2 * slope)
             self.fft_plot.setXRange(0, range_x)
         else:
             plot_dist = False

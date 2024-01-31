@@ -33,12 +33,11 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-'''CFAR Radar Demo with Phaser (CN0566)
+'''FMCW Radar Demo with Phaser (CN0566)
    Jon Kraft, Jan 20 2024'''
 
 # Imports
 import adi
-from target_detection_dbfs import cfar
 
 import sys
 import time
@@ -79,8 +78,8 @@ except:
 sample_rate = 0.6e6
 center_freq = 2.1e9
 signal_freq = 100e3
-num_slices = 50     # this sets how much time will be displayed on the waterfall plot
-fft_size = 1024 * 8
+num_slices = 400     # this sets how much time will be displayed on the waterfall plot
+fft_size = 1024 * 4
 plot_freq = 100e3    # x-axis freq range to plot
 img_array = np.ones((num_slices, fft_size))*(-100)
 
@@ -172,8 +171,7 @@ freq = np.linspace(-fs / 2, fs / 2, int(N_frame))
 slope = BW / ramp_time_s
 dist = (freq - signal_freq) * c / (2 * slope)
 
-plot_threshold = False
-cfar_toggle = False
+plot_dist = False
 
 
 class Window(QMainWindow):
@@ -192,11 +190,11 @@ class Window(QMainWindow):
     def UiComponents(self):
         widget = QWidget()
 
-        global layout, signal_freq, plot_freq
+        global layout, signal_freq
         layout = QGridLayout()
 
         # Control Panel
-        control_label = QLabel("PHASER CFAR Targeting")
+        control_label = QLabel("PHASER Simple FMCW Radar")
         font = control_label.font()
         font.setPointSize(24)
         control_label.setFont(font)
@@ -205,18 +203,27 @@ class Window(QMainWindow):
         layout.addWidget(control_label, 0, 0, 1, 2)
 
         # Check boxes
-        self.thresh_check = QCheckBox("Plot CFAR Threshold")
-        font = self.thresh_check.font()
+        self.x_axis_check = QCheckBox("Toggle Range/Frequency x-axis")
+        font = self.x_axis_check.font()
         font.setPointSize(10)
-        self.thresh_check.setFont(font)
-        self.thresh_check.stateChanged.connect(self.change_thresh)
-        layout.addWidget(self.thresh_check, 2, 0)
-        
-        self.cfar_check = QCheckBox("Apply CFAR Threshold")
-        font = self.cfar_check.font()
-        self.cfar_check.setFont(font)
-        self.cfar_check.stateChanged.connect(self.change_cfar)
-        layout.addWidget(self.cfar_check, 2, 1)
+        self.x_axis_check.setFont(font)
+
+        self.x_axis_check.stateChanged.connect(self.change_x_axis)
+        layout.addWidget(self.x_axis_check, 2, 0)
+
+        # Range resolution
+        # Changes with the Chirp BW slider
+        self.range_res_label = QLabel(
+            "B: %0.2f MHz - R<sub>res</sub>: %0.2f m"
+            % (default_chirp_bw / 1e6, c / (2 * default_chirp_bw))
+        )
+        font = self.range_res_label.font()
+        font.setPointSize(10)
+        self.range_res_label.setFont(font)
+        self.range_res_label.setAlignment(Qt.AlignLeft)
+        self.range_res_label.setMaximumWidth(200)
+        self.range_res_label.setMinimumWidth(100)
+        layout.addWidget(self.range_res_label, 4, 1)
 
         # Chirp bandwidth slider
         self.bw_slider = QSlider(Qt.Horizontal)
@@ -237,96 +244,47 @@ class Window(QMainWindow):
         self.quit_button = QPushButton("Quit")
         self.quit_button.pressed.connect(self.end_program)
         layout.addWidget(self.quit_button, 30, 0, 4, 4)
-        
-        #CFAR Sliders
-        self.cfar_bias = QSlider(Qt.Horizontal)
-        self.cfar_bias.setMinimum(0)
-        self.cfar_bias.setMaximum(100)
-        self.cfar_bias.setValue(40)
-        self.cfar_bias.setTickInterval(5)
-        self.cfar_bias.setMaximumWidth(200)
-        self.cfar_bias.setTickPosition(QSlider.TicksBelow)
-        self.cfar_bias.valueChanged.connect(self.get_cfar_values)
-        layout.addWidget(self.cfar_bias, 8, 0)
-        self.cfar_bias_label = QLabel("CFAR Bias (dB): %0.0f" % (self.cfar_bias.value()))
-        self.cfar_bias_label.setFont(font)
-        self.cfar_bias_label.setAlignment(Qt.AlignLeft)
-        self.cfar_bias_label.setMinimumWidth(100)
-        self.cfar_bias_label.setMaximumWidth(200)
-        layout.addWidget(self.cfar_bias_label, 8, 1)
-        
-        self.cfar_guard = QSlider(Qt.Horizontal)
-        self.cfar_guard.setMinimum(1)
-        self.cfar_guard.setMaximum(40)
-        self.cfar_guard.setValue(27)
-        self.cfar_guard.setTickInterval(4)
-        self.cfar_guard.setMaximumWidth(200)
-        self.cfar_guard.setTickPosition(QSlider.TicksBelow)
-        self.cfar_guard.valueChanged.connect(self.get_cfar_values)
-        layout.addWidget(self.cfar_guard, 10, 0)
-        self.cfar_guard_label = QLabel("Num Guard Cells: %0.0f" % (self.cfar_guard.value()))
-        self.cfar_guard_label.setFont(font)
-        self.cfar_guard_label.setAlignment(Qt.AlignLeft)
-        self.cfar_guard_label.setMinimumWidth(100)
-        self.cfar_guard_label.setMaximumWidth(200)
-        layout.addWidget(self.cfar_guard_label, 10, 1)
-        
-        self.cfar_ref = QSlider(Qt.Horizontal)
-        self.cfar_ref.setMinimum(1)
-        self.cfar_ref.setMaximum(100)
-        self.cfar_ref.setValue(16)
-        self.cfar_ref.setTickInterval(10)
-        self.cfar_ref.setMaximumWidth(200)
-        self.cfar_ref.setTickPosition(QSlider.TicksBelow)
-        self.cfar_ref.valueChanged.connect(self.get_cfar_values)
-        layout.addWidget(self.cfar_ref, 12, 0)
-        self.cfar_ref_label = QLabel("Num Ref Cells: %0.0f" % (self.cfar_ref.value()))
-        self.cfar_ref_label.setFont(font)
-        self.cfar_ref_label.setAlignment(Qt.AlignLeft)
-        self.cfar_ref_label.setMinimumWidth(100)
-        self.cfar_ref_label.setMaximumWidth(200)
-        layout.addWidget(self.cfar_ref_label, 12, 1)
 
 
         # waterfall level slider
         self.low_slider = QSlider(Qt.Horizontal)
-        self.low_slider.setMinimum(-100)
-        self.low_slider.setMaximum(0)
-        self.low_slider.setValue(-100)
-        self.low_slider.setTickInterval(20)
+        self.low_slider.setMinimum(-1000)
+        self.low_slider.setMaximum(1000)
+        self.low_slider.setValue(-500)
+        self.low_slider.setTickInterval(50)
         self.low_slider.setMaximumWidth(200)
         self.low_slider.setTickPosition(QSlider.TicksBelow)
         self.low_slider.valueChanged.connect(self.get_water_levels)
-        layout.addWidget(self.low_slider, 16, 0)
+        layout.addWidget(self.low_slider, 8, 0)
 
         self.high_slider = QSlider(Qt.Horizontal)
-        self.high_slider.setMinimum(-100)
-        self.high_slider.setMaximum(0)
-        self.high_slider.setValue(0)
-        self.high_slider.setTickInterval(20)
+        self.high_slider.setMinimum(-1000)
+        self.high_slider.setMaximum(1000)
+        self.high_slider.setValue(500)
+        self.high_slider.setTickInterval(50)
         self.high_slider.setMaximumWidth(200)
         self.high_slider.setTickPosition(QSlider.TicksBelow)
         self.high_slider.valueChanged.connect(self.get_water_levels)
-        layout.addWidget(self.high_slider, 18, 0)
+        layout.addWidget(self.high_slider, 10, 0)
 
         self.water_label = QLabel("Waterfall Intensity Levels")
         self.water_label.setFont(font)
         self.water_label.setAlignment(Qt.AlignCenter)
         self.water_label.setMinimumWidth(100)
         self.water_label.setMaximumWidth(200)
-        layout.addWidget(self.water_label, 15, 0,1,1)
+        layout.addWidget(self.water_label, 7, 0,1,1)
         self.low_label = QLabel("LOW LEVEL: %0.0f" % (self.low_slider.value()))
         self.low_label.setFont(font)
         self.low_label.setAlignment(Qt.AlignLeft)
         self.low_label.setMinimumWidth(100)
         self.low_label.setMaximumWidth(200)
-        layout.addWidget(self.low_label, 16, 1)
+        layout.addWidget(self.low_label, 8, 1)
         self.high_label = QLabel("HIGH LEVEL: %0.0f" % (self.high_slider.value()))
         self.high_label.setFont(font)
         self.high_label.setAlignment(Qt.AlignLeft)
         self.high_label.setMinimumWidth(100)
         self.high_label.setMaximumWidth(200)
-        layout.addWidget(self.high_label, 18, 1)
+        layout.addWidget(self.high_label, 10, 1)
 
         self.steer_slider = QSlider(Qt.Horizontal)
         self.steer_slider.setMinimum(-80)
@@ -336,25 +294,24 @@ class Window(QMainWindow):
         self.steer_slider.setMaximumWidth(200)
         self.steer_slider.setTickPosition(QSlider.TicksBelow)
         self.steer_slider.valueChanged.connect(self.get_steer_angle)
-        layout.addWidget(self.steer_slider, 22, 0)
+        layout.addWidget(self.steer_slider, 14, 0)
         self.steer_title = QLabel("Receive Steering Angle")
         self.steer_title.setFont(font)
         self.steer_title.setAlignment(Qt.AlignCenter)
         self.steer_title.setMinimumWidth(100)
         self.steer_title.setMaximumWidth(200)
-        layout.addWidget(self.steer_title, 21, 0)
+        layout.addWidget(self.steer_title, 13, 0)
         self.steer_label = QLabel("%0.0f DEG" % (self.steer_slider.value()))
         self.steer_label.setFont(font)
         self.steer_label.setAlignment(Qt.AlignLeft)
         self.steer_label.setMinimumWidth(100)
         self.steer_label.setMaximumWidth(200)
-        layout.addWidget(self.steer_label, 22, 1,1,2)
+        layout.addWidget(self.steer_label, 14, 1,1,2)
 
         # FFT plot
         self.fft_plot = pg.plot()
         self.fft_plot.setMinimumWidth(600)
         self.fft_curve = self.fft_plot.plot(freq, pen={'color':'y', 'width':2})
-        self.fft_threshold = self.fft_plot.plot(freq, pen={'color':'r', 'width':2})
         title_style = {"size": "20pt"}
         label_style = {"color": "#FFF", "font-size": "14pt"}
         self.fft_plot.setLabel("bottom", text="Frequency", units="Hz", **label_style)
@@ -392,22 +349,16 @@ class Window(QMainWindow):
         self.setCentralWidget(widget)
 
     def get_range_res(self):
-        """ Updates the slider bar label with Chirp bandwidth and range resolution
+        """ Updates the slider bar label with RF bandwidth and range resolution
 		Returns:
 			None
 		"""
         bw = self.bw_slider.value() * 1e6
         range_res = c / (2 * bw)
-
-    def get_cfar_values(self):
-        """ Updates the cfar values
-		Returns:
-			None
-		"""
-        self.cfar_bias_label.setText("CFAR Bias (dB): %0.0f" % (self.cfar_bias.value()))
-        self.cfar_guard_label.setText("Num Guard Cells: %0.0f" % (self.cfar_guard.value()))
-        self.cfar_ref_label.setText("Num Ref Cells: %0.0f" % (self.cfar_ref.value()))
-
+        self.range_res_label.setText(
+            "B: %0.2f MHz - R<sub>res</sub>: %0.2f m"
+            % (bw / 1e6, c / (2 * bw))
+        )
 
     def get_water_levels(self):
         """ Updates the waterfall intensity levels
@@ -444,6 +395,13 @@ class Window(QMainWindow):
         bw = self.bw_slider.value() * 1e6
         slope = bw / ramp_time_s
         dist = (freq - signal_freq) * c / (2 * slope)
+        if self.x_axis_check.isChecked() == True:
+            plot_dist = True
+            range_x = (plot_freq) * c / (2 * slope)
+            self.fft_plot.setXRange(0, range_x)
+        else:
+            plot_dist = False
+            self.fft_plot.setXRange(signal_freq, signal_freq+plot_freq)
         my_phaser.freq_dev_range = int(bw / 4)  # frequency deviation range in Hz
         my_phaser.enable = 0
 
@@ -455,33 +413,22 @@ class Window(QMainWindow):
         my_sdr.tx_destroy_buffer()
         self.close()
 
-    def change_thresh(self, state):
-        """ Toggles between showing cfar threshold values
+    def change_x_axis(self, state):
+        """ Toggles between showing frequency and range for the x-axis
 		Args:
 			state (QtCore.Qt.Checked) : State of check box
 		Returns:
 			None
 		"""
-        global plot_threshold
+        global plot_dist, slope, signal_freq, plot_freq
         plot_state = win.fft_plot.getViewBox().state
         if state == QtCore.Qt.Checked:
-            plot_threshold = True
+            plot_dist = True
+            range_x = (plot_freq) * c / (2 * slope)
+            self.fft_plot.setXRange(0, range_x)
         else:
-            plot_threshold = False
-
-    def change_cfar(self, state):
-        """ Toggles between enabling/disabling CFAR
-		Args:
-			state (QtCore.Qt.Checked) : State of check box
-		Returns:
-			None
-		"""
-        global cfar_toggle
-        if state == QtCore.Qt.Checked:
-            cfar_toggle = True
-        else:
-            cfar_toggle = False
-
+            plot_dist = False
+            self.fft_plot.setXRange(signal_freq, signal_freq+plot_freq)
 
 
 # create pyqt5 app
@@ -491,47 +438,44 @@ App = QApplication(sys.argv)
 win = Window()
 index = 0
 
+
 def update():
     """ Updates the FFT in the window
 	Returns:
 		None
 	"""
-    global index, plot_threshold, freq, dist
+    global index, plot_dist, freq, dist, s_vel
     label_style = {"color": "#FFF", "font-size": "14pt"}
 
     data = my_sdr.rx()
-    data = data[0] + data[1]   
+    data = data[0] + data[1]
     win_funct = np.blackman(len(data))
     y = data * win_funct
-    data_fft = np.fft.fft(y, n=fft_size)
-    sp = np.absolute(data_fft)
+    sp = np.absolute(np.fft.fft(y))
     sp = np.fft.fftshift(sp)
     s_mag = np.abs(sp) / np.sum(win_funct)
     s_mag = np.maximum(s_mag, 10 ** (-15))
     s_dbfs = 20 * np.log10(s_mag / (2 ** 11))
+    index_100 = int(N_frame/2+N_frame*signal_freq/sample_rate)
+    vel_range = N_frame-index_100-1
+    s_vel = np.zeros(N_frame)
+    for i in range(vel_range):
+        index_high = index_100 + i
+        index_low = index_100 - i
+        s_vel[i] = 0.03/4 * (s_dbfs[index_high]-s_dbfs[index_low])*1000
+    s_vel = np.ones(N_frame)*abs(s_vel)
+    
+    
 
-    bias = win.cfar_bias.value()
-    num_guard_cells = win.cfar_guard.value()
-    num_ref_cells = win.cfar_ref.value()
-    cfar_method = 'average'
-    if (True):
-        threshold, targets = cfar(s_dbfs, num_guard_cells, num_ref_cells, bias, cfar_method)
-        s_dbfs_cfar = targets.filled(-200)  # fill the values below the threshold with -200 dBFS
-        s_dbfs_threshold = threshold
-
-    win.fft_threshold.setData(freq, s_dbfs_threshold)
-    if plot_threshold:
-        win.fft_threshold.setVisible(True)
+    if plot_dist:
+        win.fft_curve.setData(dist, s_dbfs)
+        win.fft_plot.setLabel("bottom", text="Distance", units="m", **label_style)
     else:
-        win.fft_threshold.setVisible(False)
+        win.fft_curve.setData(freq, s_vel)
+        win.fft_plot.setLabel("bottom", text="Frequency", units="Hz", **label_style)
 
     win.img_array = np.roll(win.img_array, 1, axis=0)
-    if cfar_toggle:
-        win.fft_curve.setData(freq, s_dbfs_cfar)
-        win.img_array[0] = s_dbfs_cfar
-    else:
-        win.fft_curve.setData(freq, s_dbfs)
-        win.img_array[0] = s_dbfs
+    win.img_array[0] = s_vel
     win.imageitem.setLevels([win.low_slider.value(), win.high_slider.value()])
     win.imageitem.setImage(win.img_array, autoLevels=False)
 
@@ -546,3 +490,4 @@ timer.start(0)
 
 # start the app
 sys.exit(App.exec())
+
