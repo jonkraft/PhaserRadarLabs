@@ -33,7 +33,9 @@
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 '''FMCW Range Doppler Demo with Phaser (CN0566)
-   Jon Kraft, June 9 2024'''
+   Updated for new TDD engine (rev 0.39 Pluto firmware)
+   Added pulse canceller MTI filter
+   Jon Kraft, Sept 25 2024'''
 
 # %%
 # Imports
@@ -46,24 +48,28 @@ plt.close('all')
 
 '''This script uses the new Pluto TDD engine
    As of March 2024, this is in the main branch of https://github.com/analogdevicesinc/pyadi-iio
-   Also, make sure your Pluto firmware is updated to rev 0.38 (or later)
+   Also, make sure your Pluto firmware is updated to rev 0.39 (or later)
 '''
 import adi
 print(adi.__version__)
 
 '''Key Parameters'''
-sample_rate = 5e6 
+sample_rate = 4e6 
 center_freq = 2.1e9
 signal_freq = 100e3
-rx_gain = 40   # must be between -3 and 70
-tx_gain = -0   # must be between 0 and -88
+rx_gain = 60   # must be between -3 and 70
+tx_gain = 0   # must be between 0 and -88
 output_freq = 9.9e9
 chirp_BW = 500e6
-ramp_time = 500  # us
-num_chirps = 128
+ramp_time = 300  # us
+num_chirps = 256
+max_range = 100
+min_scale = 0
+max_scale = 100
 plot_data = True
+mti_filter = True
 save_data = False   # saves data for later processing (use "Range_Doppler_Processing.py")
-f = "phaserRadarData.npy"
+f = "saved_radar_data.npy"
 
 # %%
 """ Program the basic hardware settings
@@ -71,6 +77,7 @@ f = "phaserRadarData.npy"
 # Instantiate all the Devices
 rpi_ip = "ip:phaser.local"  # IP address of the Raspberry Pi
 sdr_ip = "ip:192.168.2.1"  # "192.168.2.1, or pluto.local"  # IP address of the Transceiver Block
+#sdr_ip = "ip:phaser.local:50901"  # using IIO context port forwarding
 my_sdr = adi.ad9361(uri=sdr_ip)
 my_phaser = adi.CN0566(uri=rpi_ip, sdr=my_sdr)
 
@@ -137,19 +144,24 @@ tdd = adi.tddn(sdr_ip)
 sdr_pins.gpio_phaser_enable = True
 tdd.enable = False         # disable TDD to configure the registers
 tdd.sync_external = True
-tdd.startup_delay_ms = 1
-tdd.frame_length_ms = ramp_time/1e3 + 0.2    # each chirp is spaced this far apart
+tdd.startup_delay_ms = 0
+PRI_ms = ramp_time/1e3 + 0.2
+tdd.frame_length_ms = PRI_ms    # each chirp is spaced this far apart
+#tdd.frame_length_raw = PRI_ms/1000 * 2 * sample_rate
 tdd.burst_count = num_chirps       # number of chirps in one continuous receive buffer
 
 tdd.channel[0].enable = True
 tdd.channel[0].polarity = False
-tdd.channel[0].on_ms = 0.01
-tdd.channel[0].off_ms = 0.1
+tdd.channel[0].on_raw = 0
+tdd.channel[0].off_raw = 10
 tdd.channel[1].enable = True
 tdd.channel[1].polarity = False
-tdd.channel[1].on_ms = 0
-tdd.channel[1].off_ms = 0.1
-tdd.channel[2].enable = False
+tdd.channel[1].on_raw = 0
+tdd.channel[1].off_raw = 10
+tdd.channel[2].enable = True
+tdd.channel[2].polarity = False
+tdd.channel[2].on_raw = 0
+tdd.channel[2].off_raw = 10
 tdd.enable = True
 
 # From start of each ramp, how many "good" points do we want?
@@ -191,12 +203,12 @@ print("buffer_time:", buffer_time, " ms")
 # %%
 """ Calculate ramp parameters
 """
-PRI = tdd.frame_length_ms / 1e3
-PRF = 1 / PRI
+PRI_s = PRI_ms / 1e3
+PRF = 1 / PRI_s
 num_bursts = tdd.burst_count
 
 # Split into frames
-N_frame = int(PRI * float(sample_rate))
+N_frame = int(PRI_s * float(sample_rate))
 
 # Obtain range-FFT x-axis
 c = 3e8
@@ -207,7 +219,7 @@ dist = (freq - signal_freq) * c / (2 * slope)
 
 # Resolutions
 R_res = c / (2 * BW)
-v_res = wavelength / (2 * num_bursts * PRI)
+v_res = wavelength / (2 * num_bursts * PRI_s)
 
 # Doppler spectrum limits
 max_doppler_freq = PRF / 2
@@ -227,8 +239,6 @@ q = np.sin(2 * np.pi * t * fc) * 2 ** 14
 iq = 0.9* (i + 1j * q)
 
 # transmit data from Pluto
-my_sdr._ctx.set_timeout(30000)
-my_sdr._rx_init_channels()
 my_sdr.tx([iq, iq])
 
 
@@ -251,25 +261,28 @@ def get_radar_data():
     # Make a 2D array of the chirps for each burst
     rx_bursts = np.zeros((num_bursts, good_ramp_samples), dtype=complex)
     for burst in range(num_bursts):
-        start_index = start_offset_samples + (burst) * N_frame
+        start_index = start_offset_samples + burst * N_frame
         stop_index = start_index + good_ramp_samples
         rx_bursts[burst] = sum_data[start_index:stop_index]
     
-    rx_bursts_fft = np.fft.fftshift(abs(np.fft.fft2(rx_bursts)))
+    return rx_bursts
+
+def freq_process(data):
+    rx_bursts_fft = np.fft.fftshift(abs(np.fft.fft2(data)))
     range_doppler_data = np.log10(rx_bursts_fft).T
-    radar_data = range_doppler_data
-    #radar_data = np.clip(radar_data, 0, 6)  # clip the data to control the max spectrogram scale
-    return rx_bursts, radar_data
+    range_doppler_data = np.clip(range_doppler_data, min_scale, max_scale)  # clip the data to control the max spectrogram scale
+    return range_doppler_data
+
 
 # %%
     
-rx_bursts, radar_data = get_radar_data()
+rx_bursts = get_radar_data()
+radar_data = freq_process(rx_bursts)
 all_data = []
 
 if plot_data == True:
     range_doppler_fig, ax = plt.subplots(figsize=(14, 7))
     extent = [-max_doppler_vel, max_doppler_vel, dist.min(), dist.max()]
-    print(extent)
     cmaps = ['inferno', 'plasma']
     cmn = cmaps[0]
     try:
@@ -286,22 +299,37 @@ if plot_data == True:
     ax.set_xlabel('Velocity [m/s]', fontsize=22)
     ax.set_ylabel('Range [m]', fontsize=22)
     
-    max_range = 20
     ax.set_xlim([-10, 10])
     ax.set_ylim([0, max_range])
-    ax.set_yticks(np.arange(2, max_range, 2))
+    ax.set_yticks(np.arange(0, max_range, max_range/20))
     plt.xticks(fontsize=20)
     plt.yticks(fontsize=20)
     
     print("sample_rate = ", sample_rate/1e6, "MHz, ramp_time = ", ramp_time, "us, num_chirps = ", num_chirps)
     print("CTRL + c to stop the loop")
+
 try:
     while True:
-        rx_bursts, radar_data = get_radar_data()
+        rx_bursts = get_radar_data()
         if save_data == True:
             all_data.append(rx_bursts)
             print("save")
         if plot_data == True:
+            if mti_filter == True:
+                rx_chirps = []
+                rx_chirps = rx_bursts
+                num_samples = len(rx_chirps[0])
+                # create 2 pulse canceller MTI array
+                Chirp2P = np.ones([num_chirps, num_samples]) * 1j
+                for chirp in range(num_chirps-1):
+                    chirpI = rx_chirps[chirp,:]
+                    chirpI1 = rx_chirps[chirp+1,:]
+                    chirp_correlation = np.correlate(chirpI, chirpI1, 'valid')
+                    angle_diff = np.angle(chirp_correlation, deg=False)  # returns radians
+                    Chirp2P[chirp:] = chirpI1 - chirpI * np.exp(-1j*angle_diff[0])
+                rx_bursts = Chirp2P
+                
+            radar_data = freq_process(rx_bursts)
             range_doppler.set_data(radar_data)
             plt.show(block=False)
             plt.pause(.1)
@@ -314,12 +342,5 @@ my_sdr.tx_destroy_buffer()
 print("Pluto Buffer Cleared!")
 if save_data == True:
     np.save(f, all_data)
-    np.save("radar_config.npy", [sample_rate, signal_freq, output_freq, num_chirps, chirp_BW, ramp_time_s, tdd.frame_length_ms])
+    np.save(f[:-4]+"_config.npy", [sample_rate, signal_freq, output_freq, num_chirps, chirp_BW, ramp_time_s, tdd.frame_length_ms])
 
-# disable TDD and revert to non-TDD (standard) mode
-tdd.enable = False
-sdr_pins.gpio_phaser_enable = False
-tdd.channel[1].polarity = not(sdr_pins.gpio_phaser_enable)
-tdd.channel[2].polarity = sdr_pins.gpio_phaser_enable
-tdd.enable = True
-tdd.enable = False
