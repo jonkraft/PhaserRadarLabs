@@ -49,7 +49,7 @@ from pyqtgraph.Qt import QtCore, QtGui
 
 '''This script uses the new Pluto TDD engine
    As of March 2024, this is in the main branch of https://github.com/analogdevicesinc/pyadi-iio
-   Also, make sure your Pluto firmware is updated to rev 0.38 (or later)
+   This script only works with Pluto rev 0.38.  For rev 0.39 (or later), use FMCW_RADAR_Waterfall_ChirpSynch_39.py
 '''
 import adi
 print(adi.__version__)
