@@ -49,7 +49,7 @@ from pyqtgraph.Qt import QtCore, QtGui
 
 '''This script uses the new Pluto TDD engine
    As of March 2024, this is in the main branch of https://github.com/analogdevicesinc/pyadi-iio
-   This script only works with Pluto rev 0.38.  For rev 0.39 (or later), use FMCW_RADAR_Waterfall_ChirpSynch_39.py
+   This script only works with Pluto rev 0.39 (or later)
 '''
 import adi
 print(adi.__version__)
@@ -138,19 +138,23 @@ sdr_pins.gpio_phaser_enable = True
 tdd.enable = False         # disable TDD to configure the registers
 tdd.sync_external = True
 tdd.startup_delay_ms = 0
-tdd.frame_length_ms = ramp_time/1e3 + 1.2    # each chirp is spaced this far apart
+PRI_ms = ramp_time/1e3 + 1.0
+tdd.frame_length_ms = PRI_ms    # each chirp is spaced this far apart
 num_chirps = 1
 tdd.burst_count = num_chirps       # number of chirps in one continuous receive buffer
 
 tdd.channel[0].enable = True
 tdd.channel[0].polarity = False
-tdd.channel[0].on_ms = 0.01
-tdd.channel[0].off_ms = 0.1
+tdd.channel[0].on_raw = 0
+tdd.channel[0].off_raw = 10
 tdd.channel[1].enable = True
 tdd.channel[1].polarity = False
-tdd.channel[1].on_ms = 0.01
-tdd.channel[1].off_ms = 0.1
-tdd.channel[2].enable = False
+tdd.channel[1].on_raw = 0
+tdd.channel[1].off_raw = 10
+tdd.channel[2].enable = True
+tdd.channel[2].polarity = False
+tdd.channel[2].on_raw = 0
+tdd.channel[2].off_raw = 10
 tdd.enable = True
 
 # From start of each ramp, how many "good" points do we want?
